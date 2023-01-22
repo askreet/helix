@@ -16,6 +16,10 @@ fn test_treesitter_indent_rust_2() {
     // Currently this fails because we can't align the parameters of a closure yet
     // test_treesitter_indent("commands.rs", "source.rust");
 }
+#[test]
+fn test_treesitter_indent_go() {
+    test_treesitter_indent("indent.go", "source.go");
+}
 
 fn test_treesitter_indent(file_name: &str, lang_scope: &str) {
     let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -37,30 +41,39 @@ fn test_treesitter_indent(file_name: &str, lang_scope: &str) {
     runtime.push("../runtime");
     std::env::set_var("HELIX_RUNTIME", runtime.to_str().unwrap());
 
-    let language_config = loader.language_config_for_scope(lang_scope).unwrap();
+    let language_config = loader
+        .language_config_for_scope(lang_scope)
+        .expect(&format!("unknown language scope {}", lang_scope));
     let highlight_config = language_config.highlight_config(&[]).unwrap();
     let syntax = Syntax::new(&doc, highlight_config, std::sync::Arc::new(loader));
     let indent_query = language_config.indent_query().unwrap();
     let text = doc.slice(..);
 
-    for i in 0..doc.len_lines() {
-        let line = text.line(i);
+    let tab_width = language_config.indent.as_ref().unwrap().tab_width;
+    let indent_style = match language_config.indent.as_ref().unwrap().unit.as_str() {
+        "\t" => IndentStyle::Tabs,
+        _ => IndentStyle::Spaces(tab_width as u8),
+    };
+
+    for line_idx in 0..doc.len_lines() {
+        let line = text.line(line_idx);
+        println!("analyzing line {}: '{}'", line_idx + 1, line);
         if let Some(pos) = helix_core::find_first_non_whitespace_char(line) {
             let suggested_indent = treesitter_indent_for_pos(
                 indent_query,
                 &syntax,
-                &IndentStyle::Spaces(4),
-                4,
+                &indent_style,
+                tab_width,
                 text,
-                i,
-                text.line_to_char(i) + pos,
+                line_idx,
+                text.line_to_char(line_idx) + pos,
                 false,
             )
             .unwrap();
             assert!(
                 line.get_slice(..pos).map_or(false, |s| s == suggested_indent),
                 "Wrong indentation on line {}:\n\"{}\" (original line)\n\"{}\" (suggested indentation)\n",
-                i+1,
+                line_idx+1,
                 line.slice(..line.len_chars()-1),
                 suggested_indent,
             );
