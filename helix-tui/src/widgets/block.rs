@@ -71,18 +71,6 @@ impl<'a> Block<'a> {
         self
     }
 
-    #[deprecated(
-        since = "0.10.0",
-        note = "You should use styling capabilities of `text::Spans` given as argument of the `title` method to apply styling to the title."
-    )]
-    pub fn title_style(mut self, style: Style) -> Block<'a> {
-        if let Some(t) = self.title {
-            let title = String::from(&t);
-            self.title = Some(Spans::from(Span::styled(title, style)));
-        }
-        self
-    }
-
     pub fn border_style(mut self, style: Style) -> Block<'a> {
         self.border_style = style;
         self

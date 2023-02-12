@@ -18,7 +18,13 @@ type PromptCharHandler = Box<dyn Fn(&mut Prompt, char, &Context)>;
 pub type Completion = (RangeFrom<usize>, Cow<'static, str>);
 type CompletionFn = Box<dyn FnMut(&Editor, &str) -> Vec<Completion>>;
 type CallbackFn = Box<dyn FnMut(&mut Context, &str, PromptEvent)>;
-pub type DocFn = Box<dyn Fn(&str) -> Option<Cow<str>>>;
+pub type DocFn = Box<dyn Fn(&str) -> Option<DocContent>>;
+
+/// The contents of a documentation popup window, with optional title.
+pub struct DocContent {
+    pub title: Option<String>,
+    pub body: String,
+}
 
 pub struct Prompt {
     prompt: Cow<'static, str>,
@@ -420,7 +426,7 @@ impl Prompt {
         }
 
         if let Some(doc) = (self.doc_fn)(&self.line) {
-            let mut text = ui::Text::new(doc.to_string());
+            let mut text = ui::Text::new(doc.body.to_string());
 
             let max_width = BASE_WIDTH * 3;
             let padding = 1;
@@ -439,10 +445,16 @@ impl Prompt {
             let background = theme.get("ui.help");
             surface.clear_with(area, background);
 
-            let block = Block::default()
-                // .title(self.title.as_str())
-                .borders(Borders::ALL)
-                .border_style(background);
+            let block = match doc.title {
+                Some(title) => Block::default()
+                    // TODO: Style?
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(background),
+                None => Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(background),
+            };
 
             let inner = block.inner(area).inner(&Margin::horizontal(1));
 

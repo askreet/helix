@@ -52,7 +52,7 @@ use crate::{
     filter_picker_entry,
     job::Callback,
     keymap::ReverseKeymap,
-    ui::{self, overlay::overlayed, FilePicker, Picker, Popup, Prompt, PromptEvent},
+    ui::{self, overlay::overlayed, DocContent, FilePicker, Picker, Popup, Prompt, PromptEvent},
 };
 
 use crate::job::{self, Jobs};

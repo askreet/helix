@@ -23,7 +23,7 @@ pub use markdown::Markdown;
 pub use menu::Menu;
 pub use picker::{DynamicPicker, FileLocation, FilePicker, Picker};
 pub use popup::Popup;
-pub use prompt::{Prompt, PromptEvent};
+pub use prompt::{DocContent, Prompt, PromptEvent};
 pub use spinner::{ProgressSpinners, Spinner};
 pub use text::Text;
 
@@ -328,6 +328,7 @@ pub mod completers {
     }
 
     pub fn setting(_editor: &Editor, input: &str) -> Vec<Completion> {
+        // TODO: Should/can we expose some API for listing and validating keys?
         static KEYS: Lazy<Vec<String>> = Lazy::new(|| {
             let mut keys = Vec::new();
             let json = serde_json::json!(Config::default());
