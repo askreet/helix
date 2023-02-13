@@ -2637,7 +2637,7 @@ pub(super) fn command_mode(cx: &mut Context) {
 
                 if let Some(completer) = TYPABLE_COMMAND_MAP
                     .get(&words[0] as &str)
-                    .map_or(None, |tc| tc.completer_for_argument_number(argument_number))
+                    .and_then(|tc| tc.completer_for_argument_number(argument_number))
                 {
                     completer(editor, part)
                         .into_iter()
