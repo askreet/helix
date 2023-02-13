@@ -12,41 +12,34 @@ use serde_json::Value;
 use ui::completers::{self, Completer};
 
 #[derive(Clone)]
-pub struct TypableCommand {
+pub struct TypableCommand<'a> {
     pub name: &'static str,
     pub aliases: &'static [&'static str],
     pub doc: &'static str,
     // params, flags, helper, completer
     pub fun: fn(&mut compositor::Context, &[Cow<str>], PromptEvent) -> anyhow::Result<()>,
     /// What completion methods, if any, does this command have?
-    pub completer: CompletionConfig,
+    pub completer: CompletionConfig<'a>,
 }
 
 #[derive(Clone)]
-pub enum CompletionConfig {
+pub enum CompletionConfig<'a> {
     /// No arguments can be automatically completed.
     NoCompletion,
     /// All arguments can be automatically completed using the same completion method.
     AllArguments(Completer),
-    // These are static fields as we statically allocate all TypableCommands.
-    /// One argument with a positional completion method.
-    PositionalArgument1(Completer),
-    /// Two arguments with different completion methods.
-    PositionalArguments2([Option<Completer>; 2]),
+    /// Each argument (optionally) has a different completion method.
+    PositionalArguments(&'a [Option<Completer>]),
 }
 
-impl TypableCommand {
+impl TypableCommand<'_> {
     fn completer_for_argument_number(&self, n: usize) -> Option<&Completer> {
         use CompletionConfig::*;
 
         match &self.completer {
             NoCompletion => None,
             AllArguments(completer) => Some(completer),
-            PositionalArgument1(completer) => match n {
-                0 => Some(completer),
-                _ => None,
-            },
-            PositionalArguments2(completers) => match completers.get(n) {
+            PositionalArguments(completers) => match completers.get(n) {
                 Some(Some(completer)) => Some(completer),
                 _ => None,
             },
@@ -2138,14 +2131,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["w"],
             doc: "Write changes to disk. Accepts an optional path (:write some/path.txt)",
             fun: write,
-            completer: CompletionConfig::PositionalArgument1(completers::filename),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "write!",
             aliases: &["w!"],
             doc: "Force write changes to disk creating necessary subdirectories. Accepts an optional path (:write some/path.txt)",
             fun: force_write,
-            completer: CompletionConfig::PositionalArgument1(completers::filename),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "new",
@@ -2154,7 +2147,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             fun: new_file,
             // TODO: This seems to complete with a filename, but doesn't use that filename to
             //       set the path of the newly created buffer.
-            completer: CompletionConfig::PositionalArgument1(completers::filename),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "format",
@@ -2199,14 +2192,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["wq", "x"],
             doc: "Write changes to disk and close the current view. Accepts an optional path (:wq some/path.txt)",
             fun: write_quit,
-            completer: CompletionConfig::PositionalArgument1(completers::filename),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "write-quit!",
             aliases: &["wq!", "x!"],
             doc: "Write changes to disk and close the current view forcefully. Accepts an optional path (:wq! some/path.txt)",
             fun: force_write_quit,
-            completer: CompletionConfig::PositionalArgument1(completers::filename),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "write-all",
@@ -2262,7 +2255,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &[],
             doc: "Change the editor theme (show current theme if no name specified).",
             fun: theme,
-            completer: CompletionConfig::PositionalArgument1(completers::theme),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::theme)]),
         },
         TypableCommand {
             name: "clipboard-yank",
@@ -2346,7 +2339,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["cd"],
             doc: "Change the current working directory.",
             fun: change_current_directory,
-            completer: CompletionConfig::PositionalArgument1(completers::directory),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::directory)]),
         },
         TypableCommand {
             name: "show-directory",
@@ -2395,7 +2388,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &[],
             doc: "Open workspace command picker",
             fun: lsp_workspace_command,
-            completer: CompletionConfig::PositionalArgument1(completers::lsp_workspace_command),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::lsp_workspace_command)]),
         },
         TypableCommand {
             name: "lsp-restart",
@@ -2479,7 +2472,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["lang"],
             doc: "Set the language of current buffer (show current language if no value specified).",
             fun: language,
-            completer: CompletionConfig::PositionalArgument1(completers::language),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::language)]),
         },
         TypableCommand {
             name: "set-option",
@@ -2487,21 +2480,21 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             doc: "Set a config option at runtime.\nFor example to disable smart case search, use `:set search.smart-case false`.",
             fun: set_option,
             // TODO: Add support for completion of the options value(s), when appropriate.
-            completer: CompletionConfig::PositionalArguments2([Some(completers::setting), None]),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::setting), None]),
         },
         TypableCommand {
             name: "toggle-option",
             aliases: &["toggle"],
             doc: "Toggle a boolean config option at runtime.\nFor example to toggle smart case search, use `:toggle search.smart-case`.",
             fun: toggle_option,
-            completer: CompletionConfig::PositionalArgument1(completers::setting),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::setting)]),
         },
         TypableCommand {
             name: "get-option",
             aliases: &["get"],
             doc: "Get the current value of a config option.",
             fun: get_option,
-            completer: CompletionConfig::PositionalArgument1(completers::setting),
+            completer: CompletionConfig::PositionalArguments(&[Some(completers::setting)]),
         },
         TypableCommand {
             name: "sort",
