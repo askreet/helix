@@ -23,12 +23,11 @@ pub struct TypableCommand {
 }
 
 impl TypableCommand {
-    fn completer_for_argument_number(&self, n: usize) -> Option<&Completer> {
-        self.signature
-            .positional_args
-            .get(n)
-            .unwrap_or(&self.signature.var_args)
-            .as_ref()
+    fn completer_for_argument_number(&self, n: usize) -> &Completer {
+        match self.signature.positional_args.get(n) {
+            Some(Some(completer)) => completer,
+            _ => &self.signature.var_args,
+        }
     }
 }
 
@@ -38,14 +37,28 @@ pub struct CommandSignature {
     positional_args: &'static [Option<Completer>],
 
     // All remaining arguments will use this completion method, if set.
-    var_args: Option<Completer>,
+    var_args: Completer,
 }
 
 impl CommandSignature {
     const fn none() -> Self {
         Self {
             positional_args: &[],
-            var_args: None,
+            var_args: completers::none,
+        }
+    }
+
+    const fn positional(completers: &'static [Option<Completer>]) -> Self {
+        Self {
+            positional_args: completers,
+            var_args: completers::none,
+        }
+    }
+
+    const fn all(completer: Completer) -> Self {
+        Self {
+            positional_args: &[],
+            var_args: completer,
         }
     }
 }
@@ -2071,30 +2084,21 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["o"],
             doc: "Open a file from disk into the current view.",
             fun: open,
-            signature: CommandSignature {
-                positional_args: &[],
-                var_args: Some(completers::filename),
-            },
+            signature: CommandSignature::all(completers::filename),
         },
         TypableCommand {
             name: "buffer-close",
             aliases: &["bc", "bclose"],
             doc: "Close the current buffer.",
             fun: buffer_close,
-            signature: CommandSignature {
-                positional_args: &[],
-                var_args: Some(completers::buffer),
-            },
+            signature: CommandSignature::all(completers::buffer),
         },
         TypableCommand {
             name: "buffer-close!",
             aliases: &["bc!", "bclose!"],
             doc: "Close the current buffer forcefully, ignoring unsaved changes.",
             fun: force_buffer_close,
-            signature: CommandSignature {
-                positional_args: &[],
-                var_args: Some(completers::buffer)
-            },
+            signature: CommandSignature::all(completers::buffer)
         },
         TypableCommand {
             name: "buffer-close-others",
@@ -2143,20 +2147,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["w"],
             doc: "Write changes to disk. Accepts an optional path (:write some/path.txt)",
             fun: write,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::filename)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "write!",
             aliases: &["w!"],
             doc: "Force write changes to disk creating necessary subdirectories. Accepts an optional path (:write some/path.txt)",
             fun: force_write,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::filename)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "new",
@@ -2165,10 +2163,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             fun: new_file,
             // TODO: This seems to complete with a filename, but doesn't use that filename to
             //       set the path of the newly created buffer.
-            signature: CommandSignature {
-                positional_args: &[Some(completers::filename)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "format",
@@ -2213,20 +2208,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["wq", "x"],
             doc: "Write changes to disk and close the current view. Accepts an optional path (:wq some/path.txt)",
             fun: write_quit,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::filename)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "write-quit!",
             aliases: &["wq!", "x!"],
             doc: "Write changes to disk and close the current view forcefully. Accepts an optional path (:wq! some/path.txt)",
             fun: force_write_quit,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::filename)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::filename)]),
         },
         TypableCommand {
             name: "write-all",
@@ -2282,10 +2271,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &[],
             doc: "Change the editor theme (show current theme if no name specified).",
             fun: theme,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::theme)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::theme)]),
         },
         TypableCommand {
             name: "clipboard-yank",
@@ -2369,10 +2355,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["cd"],
             doc: "Change the current working directory.",
             fun: change_current_directory,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::directory)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::directory)]),
         },
         TypableCommand {
             name: "show-directory",
@@ -2421,10 +2404,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &[],
             doc: "Open workspace command picker",
             fun: lsp_workspace_command,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::lsp_workspace_command)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::lsp_workspace_command)]),
         },
         TypableCommand {
             name: "lsp-restart",
@@ -2466,10 +2446,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["vs"],
             doc: "Open the file in a vertical split.",
             fun: vsplit,
-            signature: CommandSignature {
-                positional_args: &[],
-                var_args: Some(completers::filename)
-            },
+            signature: CommandSignature::all(completers::filename)
         },
         TypableCommand {
             name: "vsplit-new",
@@ -2483,10 +2460,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["hs", "sp"],
             doc: "Open the file in a horizontal split.",
             fun: hsplit,
-            signature: CommandSignature {
-                positional_args: &[],
-                var_args: Some(completers::filename)
-            },
+            signature: CommandSignature::all(completers::filename)
         },
         TypableCommand {
             name: "hsplit-new",
@@ -2514,10 +2488,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["lang"],
             doc: "Set the language of current buffer (show current language if no value specified).",
             fun: language,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::language)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::language)]),
         },
         TypableCommand {
             name: "set-option",
@@ -2525,30 +2496,21 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             doc: "Set a config option at runtime.\nFor example to disable smart case search, use `:set search.smart-case false`.",
             fun: set_option,
             // TODO: Add support for completion of the options value(s), when appropriate.
-            signature: CommandSignature {
-                positional_args: &[Some(completers::setting), None],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::setting)]),
         },
         TypableCommand {
             name: "toggle-option",
             aliases: &["toggle"],
             doc: "Toggle a boolean config option at runtime.\nFor example to toggle smart case search, use `:toggle search.smart-case`.",
             fun: toggle_option,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::setting)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::setting)]),
         },
         TypableCommand {
             name: "get-option",
             aliases: &["get"],
             doc: "Get the current value of a config option.",
             fun: get_option,
-            signature: CommandSignature {
-                positional_args: &[Some(completers::setting)],
-                var_args: None,
-            },
+            signature: CommandSignature::positional(&[Some(completers::setting)]),
         },
         TypableCommand {
             name: "sort",
@@ -2632,10 +2594,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["sh"],
             doc: "Run a shell command",
             fun: run_shell_command,
-            signature: CommandSignature {
-                positional_args: &[],
-                var_args: Some(completers::filename)
-            },
+            signature: CommandSignature::all(completers::filename)
         },
     ];
 
@@ -2694,7 +2653,7 @@ pub(super) fn command_mode(cx: &mut Context) {
 
                 if let Some(completer) = TYPABLE_COMMAND_MAP
                     .get(&words[0] as &str)
-                    .and_then(|tc| tc.completer_for_argument_number(argument_number))
+                    .map(|tc| tc.completer_for_argument_number(argument_number))
                 {
                     completer(editor, part)
                         .into_iter()
