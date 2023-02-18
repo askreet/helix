@@ -12,37 +12,40 @@ use serde_json::Value;
 use ui::completers::{self, Completer};
 
 #[derive(Clone)]
-pub struct TypableCommand<'a> {
+pub struct TypableCommand {
     pub name: &'static str,
     pub aliases: &'static [&'static str],
     pub doc: &'static str,
     // params, flags, helper, completer
     pub fun: fn(&mut compositor::Context, &[Cow<str>], PromptEvent) -> anyhow::Result<()>,
     /// What completion methods, if any, does this command have?
-    pub completer: CompletionConfig<'a>,
+    pub signature: CommandSignature,
+}
+
+impl TypableCommand {
+    fn completer_for_argument_number(&self, n: usize) -> Option<&Completer> {
+        self.signature
+            .positional_args
+            .get(n)
+            .unwrap_or(&self.signature.var_args)
+            .as_ref()
+    }
 }
 
 #[derive(Clone)]
-pub enum CompletionConfig<'a> {
-    /// No arguments can be automatically completed.
-    NoCompletion,
-    /// All arguments can be automatically completed using the same completion method.
-    AllArguments(Completer),
-    /// Each argument (optionally) has a different completion method.
-    PositionalArguments(&'a [Option<Completer>]),
+pub struct CommandSignature {
+    // Arguments with specific completion methods based on their position.
+    positional_args: &'static [Option<Completer>],
+
+    // All remaining arguments will use this completion method, if set.
+    var_args: Option<Completer>,
 }
 
-impl TypableCommand<'_> {
-    fn completer_for_argument_number(&self, n: usize) -> Option<&Completer> {
-        use CompletionConfig::*;
-
-        match &self.completer {
-            NoCompletion => None,
-            AllArguments(completer) => Some(completer),
-            PositionalArguments(completers) => match completers.get(n) {
-                Some(Some(completer)) => Some(completer),
-                _ => None,
-            },
+impl CommandSignature {
+    const fn none() -> Self {
+        Self {
+            positional_args: &[],
+            var_args: None,
         }
     }
 }
@@ -2054,91 +2057,106 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["q"],
             doc: "Close the current view.",
             fun: quit,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "quit!",
             aliases: &["q!"],
             doc: "Force close the current view, ignoring unsaved changes.",
             fun: force_quit,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "open",
             aliases: &["o"],
             doc: "Open a file from disk into the current view.",
             fun: open,
-            completer: CompletionConfig::AllArguments(completers::filename),
+            signature: CommandSignature {
+                positional_args: &[],
+                var_args: Some(completers::filename),
+            },
         },
         TypableCommand {
             name: "buffer-close",
             aliases: &["bc", "bclose"],
             doc: "Close the current buffer.",
             fun: buffer_close,
-            completer: CompletionConfig::AllArguments(completers::buffer),
+            signature: CommandSignature {
+                positional_args: &[],
+                var_args: Some(completers::buffer),
+            },
         },
         TypableCommand {
             name: "buffer-close!",
             aliases: &["bc!", "bclose!"],
             doc: "Close the current buffer forcefully, ignoring unsaved changes.",
             fun: force_buffer_close,
-            completer: CompletionConfig::AllArguments(completers::buffer),
+            signature: CommandSignature {
+                positional_args: &[],
+                var_args: Some(completers::buffer)
+            },
         },
         TypableCommand {
             name: "buffer-close-others",
             aliases: &["bco", "bcloseother"],
             doc: "Close all buffers but the currently focused one.",
             fun: buffer_close_others,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "buffer-close-others!",
             aliases: &["bco!", "bcloseother!"],
             doc: "Force close all buffers but the currently focused one.",
             fun: force_buffer_close_others,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "buffer-close-all",
             aliases: &["bca", "bcloseall"],
             doc: "Close all buffers without quitting.",
             fun: buffer_close_all,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "buffer-close-all!",
             aliases: &["bca!", "bcloseall!"],
             doc: "Force close all buffers ignoring unsaved changes without quitting.",
             fun: force_buffer_close_all,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "buffer-next",
             aliases: &["bn", "bnext"],
             doc: "Goto next buffer.",
             fun: buffer_next,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "buffer-previous",
             aliases: &["bp", "bprev"],
             doc: "Goto previous buffer.",
             fun: buffer_previous,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "write",
             aliases: &["w"],
             doc: "Write changes to disk. Accepts an optional path (:write some/path.txt)",
             fun: write,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::filename)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "write!",
             aliases: &["w!"],
             doc: "Force write changes to disk creating necessary subdirectories. Accepts an optional path (:write some/path.txt)",
             fun: force_write,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::filename)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "new",
@@ -2147,21 +2165,24 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             fun: new_file,
             // TODO: This seems to complete with a filename, but doesn't use that filename to
             //       set the path of the newly created buffer.
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::filename)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "format",
             aliases: &["fmt"],
             doc: "Format the file using the LSP formatter.",
             fun: format,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "indent-style",
             aliases: &[],
             doc: "Set the indentation style for editing. ('t' for tabs or 1-8 for number of spaces.)",
             fun: set_indent_style,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "line-ending",
@@ -2171,308 +2192,332 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             #[cfg(feature = "unicode-lines")]
             doc: "Set the document's default line ending. Options: crlf, lf, cr, ff, nel.",
             fun: set_line_ending,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "earlier",
             aliases: &["ear"],
             doc: "Jump back to an earlier point in edit history. Accepts a number of steps or a time span.",
             fun: earlier,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "later",
             aliases: &["lat"],
             doc: "Jump to a later point in edit history. Accepts a number of steps or a time span.",
             fun: later,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "write-quit",
             aliases: &["wq", "x"],
             doc: "Write changes to disk and close the current view. Accepts an optional path (:wq some/path.txt)",
             fun: write_quit,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::filename)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "write-quit!",
             aliases: &["wq!", "x!"],
             doc: "Write changes to disk and close the current view forcefully. Accepts an optional path (:wq! some/path.txt)",
             fun: force_write_quit,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::filename)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::filename)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "write-all",
             aliases: &["wa"],
             doc: "Write changes from all buffers to disk.",
             fun: write_all,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "write-quit-all",
             aliases: &["wqa", "xa"],
             doc: "Write changes from all buffers to disk and close all views.",
             fun: write_all_quit,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "write-quit-all!",
             aliases: &["wqa!", "xa!"],
             doc: "Write changes from all buffers to disk and close all views forcefully (ignoring unsaved changes).",
             fun: force_write_all_quit,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "quit-all",
             aliases: &["qa"],
             doc: "Close all views.",
             fun: quit_all,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "quit-all!",
             aliases: &["qa!"],
             doc: "Force close all views ignoring unsaved changes.",
             fun: force_quit_all,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "cquit",
             aliases: &["cq"],
             doc: "Quit with exit code (default 1). Accepts an optional integer exit code (:cq 2).",
             fun: cquit,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "cquit!",
             aliases: &["cq!"],
             doc: "Force quit with exit code (default 1) ignoring unsaved changes. Accepts an optional integer exit code (:cq! 2).",
             fun: force_cquit,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "theme",
             aliases: &[],
             doc: "Change the editor theme (show current theme if no name specified).",
             fun: theme,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::theme)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::theme)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "clipboard-yank",
             aliases: &[],
             doc: "Yank main selection into system clipboard.",
             fun: yank_main_selection_to_clipboard,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "clipboard-yank-join",
             aliases: &[],
             doc: "Yank joined selections into system clipboard. A separator can be provided as first argument. Default value is newline.", // FIXME: current UI can't display long doc.
             fun: yank_joined_to_clipboard,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "primary-clipboard-yank",
             aliases: &[],
             doc: "Yank main selection into system primary clipboard.",
             fun: yank_main_selection_to_primary_clipboard,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "primary-clipboard-yank-join",
             aliases: &[],
             doc: "Yank joined selections into system primary clipboard. A separator can be provided as first argument. Default value is newline.", // FIXME: current UI can't display long doc.
             fun: yank_joined_to_primary_clipboard,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "clipboard-paste-after",
             aliases: &[],
             doc: "Paste system clipboard after selections.",
             fun: paste_clipboard_after,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "clipboard-paste-before",
             aliases: &[],
             doc: "Paste system clipboard before selections.",
             fun: paste_clipboard_before,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "clipboard-paste-replace",
             aliases: &[],
             doc: "Replace selections with content of system clipboard.",
             fun: replace_selections_with_clipboard,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "primary-clipboard-paste-after",
             aliases: &[],
             doc: "Paste primary clipboard after selections.",
             fun: paste_primary_clipboard_after,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "primary-clipboard-paste-before",
             aliases: &[],
             doc: "Paste primary clipboard before selections.",
             fun: paste_primary_clipboard_before,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "primary-clipboard-paste-replace",
             aliases: &[],
             doc: "Replace selections with content of system primary clipboard.",
             fun: replace_selections_with_primary_clipboard,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "show-clipboard-provider",
             aliases: &[],
             doc: "Show clipboard provider name in status bar.",
             fun: show_clipboard_provider,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "change-current-directory",
             aliases: &["cd"],
             doc: "Change the current working directory.",
             fun: change_current_directory,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::directory)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::directory)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "show-directory",
             aliases: &["pwd"],
             doc: "Show the current working directory.",
             fun: show_current_directory,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "encoding",
             aliases: &[],
             doc: "Set encoding. Based on `https://encoding.spec.whatwg.org`.",
             fun: set_encoding,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "character-info",
             aliases: &["char"],
             doc: "Get info about the character under the primary cursor.",
             fun: get_character_info,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "reload",
             aliases: &[],
             doc: "Discard changes and reload from the source file.",
             fun: reload,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "reload-all",
             aliases: &[],
             doc: "Discard changes and reload all documents from the source files.",
             fun: reload_all,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "update",
             aliases: &[],
             doc: "Write changes only if the file has been modified.",
             fun: update,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "lsp-workspace-command",
             aliases: &[],
             doc: "Open workspace command picker",
             fun: lsp_workspace_command,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::lsp_workspace_command)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::lsp_workspace_command)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "lsp-restart",
             aliases: &[],
             doc: "Restarts the Language Server that is in use by the current doc",
             fun: lsp_restart,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "tree-sitter-scopes",
             aliases: &[],
             doc: "Display tree sitter scopes, primarily for theming and development.",
             fun: tree_sitter_scopes,
-            completer: CompletionConfig::NoCompletion,
-       },
+            signature: CommandSignature::none(),
+        },
         TypableCommand {
             name: "debug-start",
             aliases: &["dbg"],
             doc: "Start a debug session from a given template with given parameters.",
             fun: debug_start,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "debug-remote",
             aliases: &["dbg-tcp"],
             doc: "Connect to a debug adapter by TCP address and start a debugging session from a given template with given parameters.",
             fun: debug_remote,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "debug-eval",
             aliases: &[],
             doc: "Evaluate expression in current debug context.",
             fun: debug_eval,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "vsplit",
             aliases: &["vs"],
             doc: "Open the file in a vertical split.",
             fun: vsplit,
-            completer: CompletionConfig::AllArguments(completers::filename),
+            signature: CommandSignature {
+                positional_args: &[],
+                var_args: Some(completers::filename)
+            },
         },
         TypableCommand {
             name: "vsplit-new",
             aliases: &["vnew"],
             doc: "Open a scratch buffer in a vertical split.",
             fun: vsplit_new,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "hsplit",
             aliases: &["hs", "sp"],
             doc: "Open the file in a horizontal split.",
             fun: hsplit,
-            completer: CompletionConfig::AllArguments(completers::filename),
+            signature: CommandSignature {
+                positional_args: &[],
+                var_args: Some(completers::filename)
+            },
         },
         TypableCommand {
             name: "hsplit-new",
             aliases: &["hnew"],
             doc: "Open a scratch buffer in a horizontal split.",
             fun: hsplit_new,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "tutor",
             aliases: &[],
             doc: "Open the tutorial.",
             fun: tutor,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "goto",
             aliases: &["g"],
             doc: "Goto line number.",
             fun: goto_line_number,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "set-language",
             aliases: &["lang"],
             doc: "Set the language of current buffer (show current language if no value specified).",
             fun: language,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::language)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::language)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "set-option",
@@ -2480,105 +2525,117 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             doc: "Set a config option at runtime.\nFor example to disable smart case search, use `:set search.smart-case false`.",
             fun: set_option,
             // TODO: Add support for completion of the options value(s), when appropriate.
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::setting), None]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::setting), None],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "toggle-option",
             aliases: &["toggle"],
             doc: "Toggle a boolean config option at runtime.\nFor example to toggle smart case search, use `:toggle search.smart-case`.",
             fun: toggle_option,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::setting)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::setting)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "get-option",
             aliases: &["get"],
             doc: "Get the current value of a config option.",
             fun: get_option,
-            completer: CompletionConfig::PositionalArguments(&[Some(completers::setting)]),
+            signature: CommandSignature {
+                positional_args: &[Some(completers::setting)],
+                var_args: None,
+            },
         },
         TypableCommand {
             name: "sort",
             aliases: &[],
             doc: "Sort ranges in selection.",
             fun: sort,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "rsort",
             aliases: &[],
             doc: "Sort ranges in selection in reverse order.",
             fun: sort_reverse,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "reflow",
             aliases: &[],
             doc: "Hard-wrap the current selection of lines to a given width.",
             fun: reflow,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "tree-sitter-subtree",
             aliases: &["ts-subtree"],
             doc: "Display tree sitter subtree under cursor, primarily for debugging queries.",
             fun: tree_sitter_subtree,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "config-reload",
             aliases: &[],
             doc: "Refresh user config.",
             fun: refresh_config,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "config-open",
             aliases: &[],
             doc: "Open the user config.toml file.",
             fun: open_config,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "log-open",
             aliases: &[],
             doc: "Open the helix log file.",
             fun: open_log,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "insert-output",
             aliases: &[],
             doc: "Run shell command, inserting output before each selection.",
             fun: insert_output,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "append-output",
             aliases: &[],
             doc: "Run shell command, appending output after each selection.",
             fun: append_output,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "pipe",
             aliases: &[],
             doc: "Pipe each selection to the shell command.",
             fun: pipe,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "pipe-to",
             aliases: &[],
             doc: "Pipe each selection to the shell command, ignoring output.",
             fun: pipe_to,
-            completer: CompletionConfig::NoCompletion,
+            signature: CommandSignature::none(),
         },
         TypableCommand {
             name: "run-shell-command",
             aliases: &["sh"],
             doc: "Run a shell command",
             fun: run_shell_command,
-            completer: CompletionConfig::AllArguments(completers::filename),
+            signature: CommandSignature {
+                positional_args: &[],
+                var_args: Some(completers::filename)
+            },
         },
     ];
 
