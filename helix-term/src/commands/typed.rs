@@ -25,7 +25,7 @@ pub struct TypableCommand {
 impl TypableCommand {
     fn completer_for_argument_number(&self, n: usize) -> &Completer {
         match self.signature.positional_args.get(n) {
-            Some(Some(completer)) => completer,
+            Some(completer) => completer,
             _ => &self.signature.var_args,
         }
     }
@@ -34,7 +34,7 @@ impl TypableCommand {
 #[derive(Clone)]
 pub struct CommandSignature {
     // Arguments with specific completion methods based on their position.
-    positional_args: &'static [Option<Completer>],
+    positional_args: &'static [Completer],
 
     // All remaining arguments will use this completion method, if set.
     var_args: Completer,
@@ -48,7 +48,7 @@ impl CommandSignature {
         }
     }
 
-    const fn positional(completers: &'static [Option<Completer>]) -> Self {
+    const fn positional(completers: &'static [Completer]) -> Self {
         Self {
             positional_args: completers,
             var_args: completers::none,
@@ -2147,14 +2147,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["w"],
             doc: "Write changes to disk. Accepts an optional path (:write some/path.txt)",
             fun: write,
-            signature: CommandSignature::positional(&[Some(completers::filename)]),
+            signature: CommandSignature::positional(&[completers::filename]),
         },
         TypableCommand {
             name: "write!",
             aliases: &["w!"],
             doc: "Force write changes to disk creating necessary subdirectories. Accepts an optional path (:write some/path.txt)",
             fun: force_write,
-            signature: CommandSignature::positional(&[Some(completers::filename)]),
+            signature: CommandSignature::positional(&[completers::filename]),
         },
         TypableCommand {
             name: "new",
@@ -2163,7 +2163,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             fun: new_file,
             // TODO: This seems to complete with a filename, but doesn't use that filename to
             //       set the path of the newly created buffer.
-            signature: CommandSignature::positional(&[Some(completers::filename)]),
+            signature: CommandSignature::positional(&[completers::filename]),
         },
         TypableCommand {
             name: "format",
@@ -2208,14 +2208,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["wq", "x"],
             doc: "Write changes to disk and close the current view. Accepts an optional path (:wq some/path.txt)",
             fun: write_quit,
-            signature: CommandSignature::positional(&[Some(completers::filename)]),
+            signature: CommandSignature::positional(&[completers::filename]),
         },
         TypableCommand {
             name: "write-quit!",
             aliases: &["wq!", "x!"],
             doc: "Write changes to disk and close the current view forcefully. Accepts an optional path (:wq! some/path.txt)",
             fun: force_write_quit,
-            signature: CommandSignature::positional(&[Some(completers::filename)]),
+            signature: CommandSignature::positional(&[completers::filename]),
         },
         TypableCommand {
             name: "write-all",
@@ -2271,7 +2271,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &[],
             doc: "Change the editor theme (show current theme if no name specified).",
             fun: theme,
-            signature: CommandSignature::positional(&[Some(completers::theme)]),
+            signature: CommandSignature::positional(&[completers::theme]),
         },
         TypableCommand {
             name: "clipboard-yank",
@@ -2355,7 +2355,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["cd"],
             doc: "Change the current working directory.",
             fun: change_current_directory,
-            signature: CommandSignature::positional(&[Some(completers::directory)]),
+            signature: CommandSignature::positional(&[completers::directory]),
         },
         TypableCommand {
             name: "show-directory",
@@ -2404,7 +2404,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &[],
             doc: "Open workspace command picker",
             fun: lsp_workspace_command,
-            signature: CommandSignature::positional(&[Some(completers::lsp_workspace_command)]),
+            signature: CommandSignature::positional(&[completers::lsp_workspace_command]),
         },
         TypableCommand {
             name: "lsp-restart",
@@ -2488,7 +2488,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             aliases: &["lang"],
             doc: "Set the language of current buffer (show current language if no value specified).",
             fun: language,
-            signature: CommandSignature::positional(&[Some(completers::language)]),
+            signature: CommandSignature::positional(&[completers::language]),
         },
         TypableCommand {
             name: "set-option",
@@ -2496,21 +2496,21 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             doc: "Set a config option at runtime.\nFor example to disable smart case search, use `:set search.smart-case false`.",
             fun: set_option,
             // TODO: Add support for completion of the options value(s), when appropriate.
-            signature: CommandSignature::positional(&[Some(completers::setting)]),
+            signature: CommandSignature::positional(&[completers::setting]),
         },
         TypableCommand {
             name: "toggle-option",
             aliases: &["toggle"],
             doc: "Toggle a boolean config option at runtime.\nFor example to toggle smart case search, use `:toggle search.smart-case`.",
             fun: toggle_option,
-            signature: CommandSignature::positional(&[Some(completers::setting)]),
+            signature: CommandSignature::positional(&[completers::setting]),
         },
         TypableCommand {
             name: "get-option",
             aliases: &["get"],
             doc: "Get the current value of a config option.",
             fun: get_option,
-            signature: CommandSignature::positional(&[Some(completers::setting)]),
+            signature: CommandSignature::positional(&[completers::setting]),
         },
         TypableCommand {
             name: "sort",
