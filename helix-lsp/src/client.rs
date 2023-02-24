@@ -359,8 +359,8 @@ impl Client {
                     }),
                     rename: Some(lsp::RenameClientCapabilities {
                         dynamic_registration: Some(false),
-                        prepare_support: Some(false),
-                        prepare_support_default_behavior: None,
+                        prepare_support: Some(true),
+                        prepare_support_default_behavior: Some(true),
                         honors_change_annotations: Some(false),
                     }),
                     code_action: Some(lsp::CodeActionClientCapabilities {
@@ -1081,20 +1081,55 @@ impl Client {
         Some(self.call::<lsp::request::CodeActionRequest>(params))
     }
 
+    pub fn can_prepare_rename(&self) -> bool {
+        match self.capabilities.get().unwrap().rename_provider {
+            Some(lsp::OneOf::Right(ref rename_options)) => {
+                rename_options.prepare_provider == Some(true)
+            }
+            _ => false,
+        }
+    }
+
+    pub fn prepare_rename(
+        &self,
+        text_document: lsp::TextDocumentIdentifier,
+        position: lsp::Position,
+    ) -> Option<impl Future<Output = Result<Value>>> {
+        if !self.can_prepare_rename() {
+            return None;
+        }
+
+        let params = lsp::TextDocumentPositionParams {
+            text_document,
+            position,
+        };
+
+        let request = self.call::<lsp::request::PrepareRenameRequest>(params);
+
+        Some(async move {
+            log::info!("KS:: in async prepare_rename");
+            request.await
+        })
+    }
+
+    pub fn can_rename_symbol(&self) -> bool {
+        let capabilities = self.capabilities.get().unwrap();
+
+        match capabilities.rename_provider {
+            Some(lsp::OneOf::Left(true)) | Some(lsp::OneOf::Right(_)) => true,
+            _ => false,
+        }
+    }
+
     pub fn rename_symbol(
         &self,
         text_document: lsp::TextDocumentIdentifier,
         position: lsp::Position,
         new_name: String,
     ) -> Option<impl Future<Output = Result<lsp::WorkspaceEdit>>> {
-        let capabilities = self.capabilities.get().unwrap();
-
-        // Return early if the language server does not support renaming.
-        match capabilities.rename_provider {
-            Some(lsp::OneOf::Left(true)) | Some(lsp::OneOf::Right(_)) => (),
-            // None | Some(false)
-            _ => return None,
-        };
+        if !self.can_rename_symbol() {
+            return None;
+        }
 
         let params = lsp::RenameParams {
             text_document_position: lsp::TextDocumentPositionParams {

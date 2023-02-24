@@ -1233,6 +1233,60 @@ pub fn hover(cx: &mut Context) {
 
 pub fn rename_symbol(cx: &mut Context) {
     let (view, doc) = current_ref!(cx.editor);
+    let language_server = language_server!(cx.editor, doc);
+
+    if language_server.can_prepare_rename() {
+        // get rename position from prepare
+        match language_server.prepare_rename(
+            doc.identifier(),
+            doc.position(view.id, language_server.offset_encoding()),
+        ) {
+            Some(future) => {
+                cx.callback(
+                    future,
+                    move |editor, compositor, response: Option<lsp::PrepareRenameResponse>| {
+                        let placeholder = match response {
+                            Some(lsp::PrepareRenameResponse::Range(range)) => {
+                                // If the LSP provides a range without the prefill text, we need to find that
+                                // range on the document and populate the prefill with it.
+                                "todo".to_string()
+                            }
+                            Some(lsp::PrepareRenameResponse::RangeWithPlaceholder {
+                                placeholder,
+                                ..
+                            }) => {
+                                // If the LSP provides a range and a placeholder, we can use the placeholder value.
+                                placeholder
+                            }
+                            // From the spec (versions 3.17)
+                            //   If { defaultBehavior: boolean } is returned (since 3.16) the rename position is valid
+                            //   and the client should use its default behavior to compute the rename range.
+                            //
+                            // This sounds as though the _value_ of the boolean is not useful, despite being unintuitive.
+                            Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
+                                get_rename_placeholder_from_word_boundary(editor)
+                            }
+                            None => todo!(),
+                        };
+
+                        // v--- Cannot send Context through thread boundaries.
+                        start_rename_prompt(&mut cx, placeholder);
+                    },
+                )
+            }
+            None => cx.editor.set_error("Rename not valid at current position"),
+        }
+    } else if language_server.can_rename_symbol() {
+        let placeholder = get_rename_placeholder_from_word_boundary(cx.editor);
+
+        start_rename_prompt(&mut cx, placeholder);
+    } else {
+        todo!()
+    }
+}
+
+fn get_rename_placeholder_from_word_boundary(editor: &Editor) -> String {
+    let (view, doc) = current_ref!(editor);
     let text = doc.text().slice(..);
     let primary_selection = doc.selection(view.id).primary();
     let prefill = if primary_selection.len() > 1 {
@@ -1243,22 +1297,27 @@ pub fn rename_symbol(cx: &mut Context) {
     }
     .fragment(text)
     .into();
+
+    prefill
+}
+
+fn start_rename_prompt(cx: &mut Context, placeholder: String) -> () {
+    let (view, doc) = current_ref!(cx.editor);
+    let language_server = language_server!(cx.editor, doc);
+    let offset_encoding = language_server.offset_encoding();
+
+    let pos = doc.position(view.id, offset_encoding);
+
     ui::prompt_with_input(
         cx,
         "rename-to:".into(),
-        prefill,
+        placeholder,
         None,
         ui::completers::none,
         move |cx: &mut compositor::Context, input: &str, event: PromptEvent| {
             if event != PromptEvent::Validate {
                 return;
             }
-
-            let (view, doc) = current!(cx.editor);
-            let language_server = language_server!(cx.editor, doc);
-            let offset_encoding = language_server.offset_encoding();
-
-            let pos = doc.position(view.id, offset_encoding);
 
             let future =
                 match language_server.rename_symbol(doc.identifier(), pos, input.to_string()) {
