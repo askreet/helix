@@ -360,7 +360,7 @@ impl Client {
                     rename: Some(lsp::RenameClientCapabilities {
                         dynamic_registration: Some(false),
                         prepare_support: Some(true),
-                        prepare_support_default_behavior: Some(true),
+                        prepare_support_default_behavior: None,
                         honors_change_annotations: Some(false),
                     }),
                     code_action: Some(lsp::CodeActionClientCapabilities {

@@ -1234,79 +1234,27 @@ pub fn hover(cx: &mut Context) {
 pub fn rename_symbol(cx: &mut Context) {
     let (view, doc) = current_ref!(cx.editor);
     let language_server = language_server!(cx.editor, doc);
+    // let offset_encoding = language_server.offset_encoding();
 
-    if language_server.can_prepare_rename() {
-        // get rename position from prepare
-        match language_server.prepare_rename(
-            doc.identifier(),
-            doc.position(view.id, language_server.offset_encoding()),
-        ) {
-            Some(future) => {
-                cx.callback(
-                    future,
-                    move |editor, compositor, response: Option<lsp::PrepareRenameResponse>| {
-                        let placeholder = match response {
-                            Some(lsp::PrepareRenameResponse::Range(range)) => {
-                                // If the LSP provides a range without the prefill text, we need to find that
-                                // range on the document and populate the prefill with it.
-                                "todo".to_string()
-                            }
-                            Some(lsp::PrepareRenameResponse::RangeWithPlaceholder {
-                                placeholder,
-                                ..
-                            }) => {
-                                // If the LSP provides a range and a placeholder, we can use the placeholder value.
-                                placeholder
-                            }
-                            // From the spec (versions 3.17)
-                            //   If { defaultBehavior: boolean } is returned (since 3.16) the rename position is valid
-                            //   and the client should use its default behavior to compute the rename range.
-                            //
-                            // This sounds as though the _value_ of the boolean is not useful, despite being unintuitive.
-                            Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
-                                get_rename_placeholder_from_word_boundary(editor)
-                            }
-                            None => todo!(),
-                        };
+    // let pos = doc.position(view.id, offset_encoding);
 
-                        // v--- Cannot send Context through thread boundaries.
-                        start_rename_prompt(&mut cx, placeholder);
-                    },
-                )
-            }
-            None => cx.editor.set_error("Rename not valid at current position"),
-        }
+    let placeholder = if language_server.can_prepare_rename() {
+        ask_lsp_for_rename_placeholder(&language_server, &doc, view.id)
     } else if language_server.can_rename_symbol() {
-        let placeholder = get_rename_placeholder_from_word_boundary(cx.editor);
-
-        start_rename_prompt(&mut cx, placeholder);
+        Ok(get_rename_placeholder_from_word_boundary(&doc, view.id))
     } else {
-        todo!()
-    }
-}
+        Err("Rename not supported by language server".to_string())
+    };
 
-fn get_rename_placeholder_from_word_boundary(editor: &Editor) -> String {
-    let (view, doc) = current_ref!(editor);
-    let text = doc.text().slice(..);
-    let primary_selection = doc.selection(view.id).primary();
-    let prefill = if primary_selection.len() > 1 {
-        primary_selection
-    } else {
-        use helix_core::textobject::{textobject_word, TextObject};
-        textobject_word(text, primary_selection, TextObject::Inside, 1, false)
-    }
-    .fragment(text)
-    .into();
-
-    prefill
-}
-
-fn start_rename_prompt(cx: &mut Context, placeholder: String) -> () {
-    let (view, doc) = current_ref!(cx.editor);
-    let language_server = language_server!(cx.editor, doc);
-    let offset_encoding = language_server.offset_encoding();
-
-    let pos = doc.position(view.id, offset_encoding);
+    let placeholder = match placeholder {
+        Ok(p) => p,
+        Err(e) => {
+            // TODO:
+            // cx.editor.set_status(e);
+            log::warn!("{}", e);
+            return;
+        }
+    };
 
     ui::prompt_with_input(
         cx,
@@ -1318,6 +1266,11 @@ fn start_rename_prompt(cx: &mut Context, placeholder: String) -> () {
             if event != PromptEvent::Validate {
                 return;
             }
+
+            let (view, doc) = current!(cx.editor);
+            let language_server = language_server!(cx.editor, doc);
+            let offset_encoding = language_server.offset_encoding();
+            let pos = doc.position(view.id, offset_encoding);
 
             let future =
                 match language_server.rename_symbol(doc.identifier(), pos, input.to_string()) {
@@ -1334,6 +1287,77 @@ fn start_rename_prompt(cx: &mut Context, placeholder: String) -> () {
             }
         },
     );
+}
+
+fn ask_lsp_for_rename_placeholder(
+    language_server: &helix_lsp::Client,
+    doc: &helix_view::Document,
+    view_id: helix_view::ViewId,
+) -> Result<String, String> {
+    match language_server.prepare_rename(
+        doc.identifier(),
+        doc.position(view_id, language_server.offset_encoding()),
+    ) {
+        Some(future) => {
+            let json = block_on(future).expect("todo: future should pass");
+            let response: Option<lsp::PrepareRenameResponse> =
+                serde_json::from_value(json).expect("todo: lsp response parse error");
+
+            match response {
+                Some(lsp::PrepareRenameResponse::Range(range)) => {
+                    let text = doc.text();
+
+                    // If the LSP provides a range without the prefill text, we need to find that
+                    // range on the document and populate the prefill with it.
+                    let range = helix_lsp::util::lsp_range_to_range(
+                        &text,
+                        range,
+                        language_server.offset_encoding(),
+                    );
+
+                    match range {
+                        Some(range) => Ok(range.slice(text.slice(..)).to_string()),
+                        None => Err(
+                            "Language server provided invalid range for rename operation"
+                                .to_string(),
+                        ),
+                    }
+                }
+                Some(lsp::PrepareRenameResponse::RangeWithPlaceholder { placeholder, .. }) => {
+                    // If the LSP provides a range and a placeholder, we can use the placeholder value.
+                    Ok(placeholder)
+                }
+                // From the spec (versions 3.17)
+                //   If { defaultBehavior: boolean } is returned (since 3.16) the rename position is valid
+                //   and the client should use its default behavior to compute the rename range.
+                //
+                // This sounds as though the _value_ of the boolean is not useful, despite being unintuitive.
+                Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
+                    Ok(get_rename_placeholder_from_word_boundary(&doc, view_id))
+                }
+                None => todo!(),
+            }
+        }
+        None => Err("Rename not valid at current position".to_string()),
+    }
+}
+
+fn get_rename_placeholder_from_word_boundary(
+    doc: &helix_view::Document,
+    view_id: helix_view::ViewId,
+) -> String {
+    let text = doc.text().slice(..);
+    let primary_selection = doc.selection(view_id).primary();
+    let prefill = if primary_selection.len() > 1 {
+        primary_selection
+    } else {
+        use helix_core::textobject::{textobject_word, TextObject};
+        textobject_word(text, primary_selection, TextObject::Inside, 1, false)
+    }
+    .fragment(text)
+    .into();
+
+    prefill
 }
 
 pub fn select_references_to_symbol_under_cursor(cx: &mut Context) {
