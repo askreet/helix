@@ -1,13 +1,30 @@
+// TODO:
+// implement next command
+// implement prev command
+// implement viewer for quickfixes
+// implement command runner for quickfix population
+// implement picker-to-quicklist
 pub mod quickfix {
-    use crate::{DocumentId, Editor};
+    use std::path::PathBuf;
 
-    #[derive(Default)]
-    pub struct Entry {
-        file: String,
-        doc_id: Option<DocumentId>,
+    use crate::Editor;
+
+    #[derive(Default, Debug)]
+    pub struct Location {
+        path: PathBuf,
+        line: usize,
+        // col: Option<usize>,
     }
 
-    #[derive(Default)]
+    #[derive(Default, Debug)]
+    pub struct Entry {
+        // TODO: I would love to use ui::FileLocation here, but that abstraction lives
+        //       in helix-term. Should it?
+        location: Location,
+        text: String,
+    }
+
+    #[derive(Default, Debug)]
     pub struct List {
         current_index: Option<usize>,
         entries: Vec<Entry>,
@@ -25,11 +42,6 @@ pub mod quickfix {
         /// Rewind the quickfix list one entry, wrapping around to the end if at
         /// the beginning already.
         pub fn prev(&mut self, editor: &mut Editor) {}
-
-        // TODO: How?
-        pub fn populate_from_picker(&mut self) {
-            self.reset()
-        }
 
         fn reset(&mut self) {
             self.current_index = None;

@@ -70,19 +70,29 @@ impl From<DocumentId> for PathOrId {
     }
 }
 
-type FileCallback<T> = Box<dyn Fn(&Editor, &T) -> Option<FileLocation>>;
-
 /// File path and range of lines (used to align and highlight lines)
 pub type FileLocation = (PathOrId, Option<(usize, usize)>);
 
-pub struct FilePicker<T: Item> {
+/// An optionally locateable entry in a picklist which can be resolved to
+/// either a document or path and a range of lines within that text.
+///
+/// TODO: Is this a generally useful concept for core?
+pub trait Locate {
+    fn locate(&self, editor: &Editor) -> Option<FileLocation>;
+}
+
+impl Locate for PathBuf {
+    fn locate(&self, _editor: &Editor) -> Option<FileLocation> {
+        Some((self.clone().into(), None))
+    }
+}
+
+pub struct FilePicker<T: Item + Locate> {
     picker: Picker<T>,
     pub truncate_start: bool,
     /// Caches paths to documents
     preview_cache: HashMap<PathBuf, CachedPreview>,
     read_buffer: Vec<u8>,
-    /// Given an item in the picker, return the file path and line number to display.
-    file_fn: FileCallback<T>,
 }
 
 pub enum CachedPreview {
@@ -122,12 +132,11 @@ impl Preview<'_, '_> {
     }
 }
 
-impl<T: Item> FilePicker<T> {
+impl<T: Item + Locate> FilePicker<T> {
     pub fn new(
         options: Vec<T>,
         editor_data: T::Data,
         callback_fn: impl Fn(&mut Context, &T, Action) + 'static,
-        preview_fn: impl Fn(&Editor, &T) -> Option<FileLocation> + 'static,
     ) -> Self {
         let truncate_start = true;
         let mut picker = Picker::new(options, editor_data, callback_fn);
@@ -138,7 +147,6 @@ impl<T: Item> FilePicker<T> {
             truncate_start,
             preview_cache: HashMap::new(),
             read_buffer: Vec::with_capacity(1024),
-            file_fn: Box::new(preview_fn),
         }
     }
 
@@ -151,7 +159,7 @@ impl<T: Item> FilePicker<T> {
     fn current_file(&self, editor: &Editor) -> Option<FileLocation> {
         self.picker
             .selection()
-            .and_then(|current| (self.file_fn)(editor, current))
+            .and_then(|current| current.locate(editor))
             .and_then(|(path_or_id, line)| path_or_id.get_canonicalized().ok().zip(Some(line)))
     }
 
@@ -231,7 +239,7 @@ impl<T: Item> FilePicker<T> {
     }
 }
 
-impl<T: Item + 'static> Component for FilePicker<T> {
+impl<T: Item + Locate + 'static> Component for FilePicker<T> {
     fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
         // +---------+ +---------+
         // |prompt   | |preview  |
@@ -352,6 +360,29 @@ impl<T: Item + 'static> Component for FilePicker<T> {
         if let Event::IdleTimeout = event {
             return self.handle_idle_timeout(ctx);
         }
+
+        match event {
+            Event::Key(ctrl!('q')) => {
+                ctx.editor.quickfix.reset();
+
+                for match_ in self.picker.matches {
+                    let match_item = self.picker.options[match_.index];
+
+                    match match_item.locate() {
+                        Some(file_location) => match file_location {
+                            (PathOrId::Id(_), None) => todo!(),
+                            (PathOrId::Id(_), Some(_)) => todo!(),
+                            (PathOrId::Path(_), None) => todo!(),
+                            (PathOrId::Path(_), Some(_)) => todo!(),
+                        },
+                        None => todo!(),
+                    }
+                }
+                return EventResult::Consumed(None);
+            }
+            _ => {}
+        };
+
         // TODO: keybinds for scrolling preview
         self.picker.handle_event(event, ctx)
     }
@@ -886,13 +917,13 @@ pub type DynQueryCallback<T> =
 
 /// A picker that updates its contents via a callback whenever the
 /// query string changes. Useful for live grep, workspace symbols, etc.
-pub struct DynamicPicker<T: ui::menu::Item + Send> {
+pub struct DynamicPicker<T: Item + Locate + Send> {
     file_picker: FilePicker<T>,
     query_callback: DynQueryCallback<T>,
     query: String,
 }
 
-impl<T: ui::menu::Item + Send> DynamicPicker<T> {
+impl<T: Item + Locate + Send> DynamicPicker<T> {
     pub const ID: &'static str = "dynamic-picker";
 
     pub fn new(file_picker: FilePicker<T>, query_callback: DynQueryCallback<T>) -> Self {
@@ -904,7 +935,7 @@ impl<T: ui::menu::Item + Send> DynamicPicker<T> {
     }
 }
 
-impl<T: Item + Send + 'static> Component for DynamicPicker<T> {
+impl<T: Item + Locate + Send + 'static> Component for DynamicPicker<T> {
     fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
         self.file_picker.render(area, surface, cx);
     }

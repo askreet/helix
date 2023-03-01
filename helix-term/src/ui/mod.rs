@@ -21,7 +21,7 @@ pub use completion::Completion;
 pub use editor::EditorView;
 pub use markdown::Markdown;
 pub use menu::Menu;
-pub use picker::{DynamicPicker, FileLocation, FilePicker, Picker};
+pub use picker::{DynamicPicker, FileLocation, FilePicker, Locate, Picker};
 pub use popup::Popup;
 pub use prompt::{Prompt, PromptEvent};
 pub use spinner::{ProgressSpinners, Spinner};
@@ -217,21 +217,16 @@ pub fn file_picker(root: PathBuf, config: &helix_view::editor::Config) -> FilePi
 
     log::debug!("file_picker init {:?}", Instant::now().duration_since(now));
 
-    FilePicker::new(
-        files,
-        root,
-        move |cx, path: &PathBuf, action| {
-            if let Err(e) = cx.editor.open(path, action) {
-                let err = if let Some(err) = e.source() {
-                    format!("{}", err)
-                } else {
-                    format!("unable to open \"{}\"", path.display())
-                };
-                cx.editor.set_error(err);
-            }
-        },
-        |_editor, path| Some((path.clone().into(), None)),
-    )
+    FilePicker::new(files, root, move |cx, path: &PathBuf, action| {
+        if let Err(e) = cx.editor.open(path, action) {
+            let err = if let Some(err) = e.source() {
+                format!("{}", err)
+            } else {
+                format!("unable to open \"{}\"", path.display())
+            };
+            cx.editor.set_error(err);
+        }
+    })
 }
 
 pub mod completers {
