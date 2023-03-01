@@ -5,6 +5,7 @@ use crate::{
     graphics::{CursorKind, Rect},
     info::Info,
     input::KeyEvent,
+    quickfix::quickfix,
     theme::{self, Theme},
     tree::{self, Tree},
     view::ViewPosition,
@@ -886,6 +887,8 @@ pub struct Editor {
     /// avoid calculating the cursor position multiple
     /// times during rendering and should not be set by other functions.
     pub cursor_cache: Cell<Option<Option<Position>>>,
+
+    pub quickfix: quickfix::List,
 }
 
 pub type RedrawHandle = (Arc<Notify>, Arc<RwLock<()>>);
@@ -984,6 +987,7 @@ impl Editor {
             redraw_handle: Default::default(),
             needs_redraw: false,
             cursor_cache: Cell::new(None),
+            quickfix: quickfix::List::new(),
         }
     }
 
