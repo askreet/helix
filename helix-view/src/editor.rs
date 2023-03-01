@@ -5,6 +5,7 @@ use crate::{
     graphics::{CursorKind, Rect},
     info::Info,
     input::KeyEvent,
+    quickfix,
     theme::{self, Theme},
     tree::{self, Tree},
     view::ViewPosition,
@@ -873,6 +874,7 @@ pub struct Editor {
     /// field is set and any old requests are automatically
     /// canceled as a result
     pub completion_request_handle: Option<oneshot::Sender<()>>,
+    pub quickfix: quickfix::List,
 }
 
 pub type RedrawHandle = (Arc<Notify>, Arc<RwLock<()>>);
@@ -972,6 +974,7 @@ impl Editor {
             needs_redraw: false,
             cursor_cache: Cell::new(None),
             completion_request_handle: None,
+            quickfix: quickfix::List::new(),
         }
     }
 

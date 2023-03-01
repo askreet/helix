@@ -31,6 +31,7 @@ use helix_core::{
 use helix_view::{
     editor::Action,
     graphics::{CursorKind, Margin, Modifier, Rect},
+    quickfix,
     theme::Style,
     view::ViewPosition,
     Document, DocumentId, Editor,
@@ -70,19 +71,29 @@ impl From<DocumentId> for PathOrId {
     }
 }
 
-type FileCallback<T> = Box<dyn Fn(&Editor, &T) -> Option<FileLocation>>;
-
 /// File path and range of lines (used to align and highlight lines)
 pub type FileLocation = (PathOrId, Option<(usize, usize)>);
 
-pub struct FilePicker<T: Item> {
+/// An optionally locateable entry in a picklist which can be resolved to
+/// either a document or path and a range of lines within that text.
+///
+/// TODO: Is this a generally useful concept for core?
+pub trait Locate {
+    fn locate(&self, editor: &Editor) -> Option<FileLocation>;
+}
+
+impl Locate for PathBuf {
+    fn locate(&self, _editor: &Editor) -> Option<FileLocation> {
+        Some((self.clone().into(), None))
+    }
+}
+
+pub struct FilePicker<T: Item + Locate> {
     picker: Picker<T>,
     pub truncate_start: bool,
     /// Caches paths to documents
     preview_cache: HashMap<PathBuf, CachedPreview>,
     read_buffer: Vec<u8>,
-    /// Given an item in the picker, return the file path and line number to display.
-    file_fn: FileCallback<T>,
 }
 
 pub enum CachedPreview {
@@ -122,12 +133,11 @@ impl Preview<'_, '_> {
     }
 }
 
-impl<T: Item> FilePicker<T> {
+impl<T: Item + Locate> FilePicker<T> {
     pub fn new(
         options: Vec<T>,
         editor_data: T::Data,
         callback_fn: impl Fn(&mut Context, &T, Action) + 'static,
-        preview_fn: impl Fn(&Editor, &T) -> Option<FileLocation> + 'static,
     ) -> Self {
         let truncate_start = true;
         let mut picker = Picker::new(options, editor_data, callback_fn);
@@ -138,7 +148,6 @@ impl<T: Item> FilePicker<T> {
             truncate_start,
             preview_cache: HashMap::new(),
             read_buffer: Vec::with_capacity(1024),
-            file_fn: Box::new(preview_fn),
         }
     }
 
@@ -151,7 +160,7 @@ impl<T: Item> FilePicker<T> {
     fn current_file(&self, editor: &Editor) -> Option<FileLocation> {
         self.picker
             .selection()
-            .and_then(|current| (self.file_fn)(editor, current))
+            .and_then(|current| current.locate(editor))
             .and_then(|(path_or_id, line)| path_or_id.get_canonicalized().ok().zip(Some(line)))
     }
 
@@ -234,7 +243,7 @@ impl<T: Item> FilePicker<T> {
     }
 }
 
-impl<T: Item + 'static> Component for FilePicker<T> {
+impl<T: Item + Locate + 'static> Component for FilePicker<T> {
     fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
         // +---------+ +---------+
         // |prompt   | |preview  |
@@ -356,6 +365,48 @@ impl<T: Item + 'static> Component for FilePicker<T> {
         if let Event::IdleTimeout = event {
             return self.handle_idle_timeout(ctx);
         }
+
+        match event {
+            Event::Key(ctrl!('q')) => {
+                ctx.editor.quickfix.reset();
+
+                let options = &self.picker.options;
+                for match_ in &self.picker.matches {
+                    let match_item = &options[match_.index];
+
+                    if let Some((path_or_id, lines)) = match_item.locate(ctx.editor) {
+                        let path = match path_or_id {
+                            PathOrId::Id(doc_id) => ctx
+                                .editor
+                                .documents
+                                .get(&doc_id)
+                                .expect("doc_id is valid in editor")
+                                .path()
+                                .expect("doc to have path")
+                                .to_owned(),
+                            PathOrId::Path(path_buf) => path_buf,
+                        };
+
+                        ctx.editor.quickfix.add(quickfix::Entry {
+                            location: quickfix::Location {
+                                path,
+                                line: lines.unwrap_or((0, 0)).0,
+                            },
+                            text: "test".to_string(),
+                        });
+                    }
+                }
+
+                ctx.editor.set_status(format!(
+                    "Quickfix populated with {} items.",
+                    self.picker.matches.len()
+                ));
+
+                return EventResult::Consumed(Some(Box::new(close_picker)));
+            }
+            _ => {}
+        };
+
         // TODO: keybinds for scrolling preview
         self.picker.handle_event(event, ctx)
     }
@@ -640,11 +691,14 @@ impl<T: Item> Picker<T> {
     }
 }
 
+fn close_picker(compositor: &mut Compositor, _cx: &mut Context) {
+    compositor.last_picker = compositor.pop();
+}
+
 // process:
 // - read all the files into a list, maxed out at a large value
 // - on input change:
 //  - score all the names in relation to input
-
 impl<T: Item + 'static> Component for Picker<T> {
     fn required_size(&mut self, viewport: (u16, u16)) -> Option<(u16, u16)> {
         self.completion_height = viewport.1.saturating_sub(4);
@@ -658,11 +712,6 @@ impl<T: Item + 'static> Component for Picker<T> {
             Event::Resize(..) => return EventResult::Consumed(None),
             _ => return EventResult::Ignored(None),
         };
-
-        let close_fn = EventResult::Consumed(Some(Box::new(|compositor: &mut Compositor, _cx| {
-            // remove the layer
-            compositor.last_picker = compositor.pop();
-        })));
 
         // So that idle timeout retriggers
         cx.editor.reset_idle_timer();
@@ -687,7 +736,7 @@ impl<T: Item + 'static> Component for Picker<T> {
                 self.to_end();
             }
             key!(Esc) | ctrl!('c') => {
-                return close_fn;
+                return EventResult::Consumed(Some(Box::new(close_picker)));
             }
             alt!(Enter) => {
                 if let Some(option) = self.selection() {
@@ -698,19 +747,19 @@ impl<T: Item + 'static> Component for Picker<T> {
                 if let Some(option) = self.selection() {
                     (self.callback_fn)(cx, option, Action::Replace);
                 }
-                return close_fn;
+                return EventResult::Consumed(Some(Box::new(close_picker)));
             }
             ctrl!('s') => {
                 if let Some(option) = self.selection() {
                     (self.callback_fn)(cx, option, Action::HorizontalSplit);
                 }
-                return close_fn;
+                return EventResult::Consumed(Some(Box::new(close_picker)));
             }
             ctrl!('v') => {
                 if let Some(option) = self.selection() {
                     (self.callback_fn)(cx, option, Action::VerticalSplit);
                 }
-                return close_fn;
+                return EventResult::Consumed(Some(Box::new(close_picker)));
             }
             ctrl!('t') => {
                 self.toggle_preview();
@@ -907,13 +956,13 @@ pub type DynQueryCallback<T> =
 
 /// A picker that updates its contents via a callback whenever the
 /// query string changes. Useful for live grep, workspace symbols, etc.
-pub struct DynamicPicker<T: ui::menu::Item + Send> {
+pub struct DynamicPicker<T: Item + Locate + Send> {
     file_picker: FilePicker<T>,
     query_callback: DynQueryCallback<T>,
     query: String,
 }
 
-impl<T: ui::menu::Item + Send> DynamicPicker<T> {
+impl<T: Item + Locate + Send> DynamicPicker<T> {
     pub const ID: &'static str = "dynamic-picker";
 
     pub fn new(file_picker: FilePicker<T>, query_callback: DynQueryCallback<T>) -> Self {
@@ -925,7 +974,7 @@ impl<T: ui::menu::Item + Send> DynamicPicker<T> {
     }
 }
 
-impl<T: Item + Send + 'static> Component for DynamicPicker<T> {
+impl<T: Item + Locate + Send + 'static> Component for DynamicPicker<T> {
     fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
         self.file_picker.render(area, surface, cx);
     }

@@ -37,7 +37,7 @@ use helix_view::{
     info::Info,
     input::KeyEvent,
     keyboard::KeyCode,
-    tree,
+    quickfix, tree,
     view::View,
     Document, DocumentId, Editor, ViewId,
 };
@@ -472,6 +472,8 @@ impl MappableCommand {
         record_macro, "Record macro",
         replay_macro, "Replay macro",
         command_palette, "Open command palette",
+        goto_next_quickfix, "Goto next quickfix entry",
+        goto_prev_quickfix, "Goto previous quickfix entry",
     );
 }
 
@@ -1976,6 +1978,15 @@ fn global_search(cx: &mut Context) {
         line_num: usize,
     }
 
+    impl ui::Locate for FileResult {
+        fn locate(&self, _editor: &Editor) -> Option<ui::FileLocation> {
+            Some((
+                self.path.clone().into(),
+                Some((self.line_num, self.line_num)),
+            ))
+        }
+    }
+
     impl FileResult {
         fn new(path: &Path, line_num: usize) -> Self {
             Self {
@@ -2141,9 +2152,6 @@ fn global_search(cx: &mut Context) {
 
                         doc.set_selection(view.id, Selection::single(start, end));
                         align_view(doc, view, Align::Center);
-                    },
-                    |_editor, FileResult { path, line_num }| {
-                        Some((path.clone().into(), Some((*line_num, *line_num))))
                     },
                 );
                 compositor.push(Box::new(overlayed(picker)));
@@ -2457,6 +2465,18 @@ fn buffer_picker(cx: &mut Context) {
         is_current: bool,
     }
 
+    impl ui::Locate for BufferMeta {
+        fn locate(&self, editor: &Editor) -> Option<ui::FileLocation> {
+            let doc = &editor.documents.get(&self.id)?;
+            let &view_id = doc.selections().keys().next()?;
+            let line = doc
+                .selection(view_id)
+                .primary()
+                .cursor_line(doc.text().slice(..));
+            Some((self.id.into(), Some((line, line))))
+        }
+    }
+
     impl ui::menu::Item for BufferMeta {
         type Data = ();
 
@@ -2499,15 +2519,6 @@ fn buffer_picker(cx: &mut Context) {
         |cx, meta, action| {
             cx.editor.switch(meta.id, action);
         },
-        |editor, meta| {
-            let doc = &editor.documents.get(&meta.id)?;
-            let &view_id = doc.selections().keys().next()?;
-            let line = doc
-                .selection(view_id)
-                .primary()
-                .cursor_line(doc.text().slice(..));
-            Some((meta.id.into(), Some((line, line))))
-        },
     );
     cx.push_layer(Box::new(overlayed(picker)));
 }
@@ -2519,6 +2530,14 @@ fn jumplist_picker(cx: &mut Context) {
         selection: Selection,
         text: String,
         is_current: bool,
+    }
+
+    impl ui::Locate for JumpMeta {
+        fn locate(&self, editor: &Editor) -> Option<ui::FileLocation> {
+            let doc = &editor.documents.get(&self.id)?;
+            let line = self.selection.primary().cursor_line(doc.text().slice(..));
+            Some((self.path.clone()?.into(), Some((line, line))))
+        }
     }
 
     impl ui::menu::Item for JumpMeta {
@@ -2584,11 +2603,6 @@ fn jumplist_picker(cx: &mut Context) {
             let (view, doc) = current!(cx.editor);
             doc.set_selection(view.id, meta.selection.clone());
             view.ensure_cursor_in_view_center(doc, config.scrolloff);
-        },
-        |editor, meta| {
-            let doc = &editor.documents.get(&meta.id)?;
-            let line = meta.selection.primary().cursor_line(doc.text().slice(..));
-            Some((meta.path.clone()?.into(), Some((line, line))))
         },
     );
     cx.push_layer(Box::new(overlayed(picker)));
@@ -2668,6 +2682,64 @@ pub fn command_palette(cx: &mut Context) {
             compositor.push(Box::new(overlayed(picker)));
         },
     ));
+}
+
+// TODO: Count with bracket operations?
+fn goto_next_quickfix(cx: &mut Context) {
+    let position = cx.editor.quickfix.next();
+
+    match position {
+        Some(pos) => {
+            goto_quickfix_location(cx.editor, pos.entry.location);
+
+            cx.editor
+                .set_status(format!("({}/{}) {}", pos.number, pos.total, pos.entry.text));
+        }
+        None => cx.editor.set_error("Quickfix list is empty!"),
+    }
+}
+
+fn goto_prev_quickfix(cx: &mut Context) {
+    let position = cx.editor.quickfix.prev();
+
+    match position {
+        Some(pos) => {
+            goto_quickfix_location(cx.editor, pos.entry.location);
+
+            cx.editor
+                .set_status(format!("({}/{}) {}", pos.number, pos.total, pos.entry.text));
+        }
+        None => cx.editor.set_error("Quickfix list is empty!"),
+    }
+}
+
+fn goto_quickfix_location(editor: &mut Editor, location: quickfix::Location) {
+    // TODO: Cribbed from global search callback, could be generalizable.
+    match editor.open(&location.path, Action::Replace) {
+        Ok(_) => {}
+        Err(e) => {
+            editor.set_error(format!(
+                "Failed to open file '{}': {}",
+                location.path.display(),
+                e
+            ));
+            return;
+        }
+    }
+
+    let (view, doc) = current!(editor);
+    let text = doc.text();
+    if location.line >= text.len_lines() {
+        editor.set_error(
+            "The line you jumped to does not exist anymore because the file has changed.",
+        );
+        return;
+    }
+    let start = text.line_to_char(location.line);
+    let end = text.line_to_char((location.line + 1).min(text.len_lines()));
+
+    doc.set_selection(view.id, Selection::single(start, end));
+    align_view(doc, view, Align::Center);
 }
 
 fn last_picker(cx: &mut Context) {

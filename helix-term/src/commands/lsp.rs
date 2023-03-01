@@ -118,6 +118,12 @@ struct PickerDiagnostic {
     diag: lsp::Diagnostic,
 }
 
+impl ui::Locate for PickerDiagnostic {
+    fn locate(&self, editor: &Editor) -> Option<FileLocation> {
+        lsp::Location::new(self.url.clone(), self.diag.range).locate(editor)
+    }
+}
+
 impl ui::menu::Item for PickerDiagnostic {
     type Data = (DiagnosticStyles, DiagnosticsFormat);
 
@@ -161,15 +167,6 @@ impl ui::menu::Item for PickerDiagnostic {
     }
 }
 
-fn location_to_file_location(location: &lsp::Location) -> FileLocation {
-    let path = location.uri.to_file_path().unwrap();
-    let line = Some((
-        location.range.start.line as usize,
-        location.range.end.line as usize,
-    ));
-    (path.into(), line)
-}
-
 // TODO: share with symbol picker(symbol.location)
 fn jump_to_location(
     editor: &mut Editor,
@@ -209,50 +206,58 @@ fn jump_to_location(
     align_view(doc, view, Align::Center);
 }
 
+impl ui::Locate for lsp::Location {
+    fn locate(&self, _editor: &Editor) -> Option<FileLocation> {
+        let path = self.uri.to_file_path().unwrap();
+        let line = Some((self.range.start.line as usize, self.range.end.line as usize));
+        Some((path.into(), line))
+    }
+}
+
+impl ui::Locate for lsp::SymbolInformation {
+    fn locate(&self, editor: &Editor) -> Option<FileLocation> {
+        self.location.locate(editor)
+    }
+}
+
 fn sym_picker(
     symbols: Vec<lsp::SymbolInformation>,
     current_path: Option<lsp::Url>,
     offset_encoding: OffsetEncoding,
 ) -> FilePicker<lsp::SymbolInformation> {
     // TODO: drop current_path comparison and instead use workspace: bool flag?
-    FilePicker::new(
-        symbols,
-        current_path.clone(),
-        move |cx, symbol, action| {
-            let (view, doc) = current!(cx.editor);
-            push_jump(view, doc);
+    FilePicker::new(symbols, current_path.clone(), move |cx, symbol, action| {
+        let (view, doc) = current!(cx.editor);
+        push_jump(view, doc);
 
-            if current_path.as_ref() != Some(&symbol.location.uri) {
-                let uri = &symbol.location.uri;
-                let path = match uri.to_file_path() {
-                    Ok(path) => path,
-                    Err(_) => {
-                        let err = format!("unable to convert URI to filepath: {}", uri);
-                        cx.editor.set_error(err);
-                        return;
-                    }
-                };
-                if let Err(err) = cx.editor.open(&path, action) {
-                    let err = format!("failed to open document: {}: {}", uri, err);
-                    log::error!("{}", err);
+        if current_path.as_ref() != Some(&symbol.location.uri) {
+            let uri = &symbol.location.uri;
+            let path = match uri.to_file_path() {
+                Ok(path) => path,
+                Err(_) => {
+                    let err = format!("unable to convert URI to filepath: {}", uri);
                     cx.editor.set_error(err);
                     return;
                 }
+            };
+            if let Err(err) = cx.editor.open(&path, action) {
+                let err = format!("failed to open document: {}: {}", uri, err);
+                log::error!("{}", err);
+                cx.editor.set_error(err);
+                return;
             }
+        }
 
-            let (view, doc) = current!(cx.editor);
+        let (view, doc) = current!(cx.editor);
 
-            if let Some(range) =
-                lsp_range_to_range(doc.text(), symbol.location.range, offset_encoding)
-            {
-                // we flip the range so that the cursor sits on the start of the symbol
-                // (for example start of the function).
-                doc.set_selection(view.id, Selection::single(range.head, range.anchor));
-                align_view(doc, view, Align::Center);
-            }
-        },
-        move |_editor, symbol| Some(location_to_file_location(&symbol.location)),
-    )
+        if let Some(range) = lsp_range_to_range(doc.text(), symbol.location.range, offset_encoding)
+        {
+            // we flip the range so that the cursor sits on the start of the symbol
+            // (for example start of the function).
+            doc.set_selection(view.id, Selection::single(range.head, range.anchor));
+            align_view(doc, view, Align::Center);
+        }
+    })
     .truncate_start(false)
 }
 
@@ -310,10 +315,6 @@ fn diag_picker(
                 doc.set_selection(view.id, Selection::single(range.head, range.anchor));
                 align_view(doc, view, Align::Center);
             }
-        },
-        move |_editor, PickerDiagnostic { url, diag }| {
-            let location = lsp::Location::new(url.clone(), diag.range);
-            Some(location_to_file_location(&location))
         },
     )
     .truncate_start(false)
@@ -947,14 +948,9 @@ fn goto_impl(
             editor.set_error("No definition found.");
         }
         _locations => {
-            let picker = FilePicker::new(
-                locations,
-                cwdir,
-                move |cx, location, action| {
-                    jump_to_location(cx.editor, location, offset_encoding, action)
-                },
-                move |_editor, location| Some(location_to_file_location(location)),
-            );
+            let picker = FilePicker::new(locations, cwdir, move |cx, location, action| {
+                jump_to_location(cx.editor, location, offset_encoding, action)
+            });
             compositor.push(Box::new(overlayed(picker)));
         }
     }
