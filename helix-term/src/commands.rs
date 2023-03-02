@@ -2669,6 +2669,7 @@ pub fn command_palette(cx: &mut Context) {
     ));
 }
 
+// TODO: Count with bracket operations?
 fn goto_next_quickfix(cx: &mut Context) {
     let position = cx.editor.quickfix.next();
 

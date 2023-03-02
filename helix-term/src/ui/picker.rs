@@ -392,7 +392,13 @@ impl<T: Item + Locate + 'static> Component for FilePicker<T> {
                         });
                     }
                 }
-                return EventResult::Consumed(None);
+
+                ctx.editor.set_status(format!(
+                    "Quickfix populated with {} items.",
+                    self.picker.matches.len()
+                ));
+
+                return EventResult::Consumed(Some(Box::new(close_picker)));
             }
             _ => {}
         };
@@ -667,11 +673,14 @@ impl<T: Item> Picker<T> {
     }
 }
 
+fn close_picker(compositor: &mut Compositor, _cx: &mut Context) {
+    compositor.last_picker = compositor.pop();
+}
+
 // process:
 // - read all the files into a list, maxed out at a large value
 // - on input change:
 //  - score all the names in relation to input
-
 impl<T: Item + 'static> Component for Picker<T> {
     fn required_size(&mut self, viewport: (u16, u16)) -> Option<(u16, u16)> {
         self.completion_height = viewport.1.saturating_sub(4);
@@ -685,11 +694,6 @@ impl<T: Item + 'static> Component for Picker<T> {
             Event::Resize(..) => return EventResult::Consumed(None),
             _ => return EventResult::Ignored(None),
         };
-
-        let close_fn = EventResult::Consumed(Some(Box::new(|compositor: &mut Compositor, _cx| {
-            // remove the layer
-            compositor.last_picker = compositor.pop();
-        })));
 
         // So that idle timeout retriggers
         cx.editor.reset_idle_timer();
@@ -714,7 +718,7 @@ impl<T: Item + 'static> Component for Picker<T> {
                 self.to_end();
             }
             key!(Esc) | ctrl!('c') => {
-                return close_fn;
+                return EventResult::Consumed(Some(Box::new(close_picker)));
             }
             alt!(Enter) => {
                 if let Some(option) = self.selection() {
@@ -725,19 +729,19 @@ impl<T: Item + 'static> Component for Picker<T> {
                 if let Some(option) = self.selection() {
                     (self.callback_fn)(cx, option, Action::Replace);
                 }
-                return close_fn;
+                return EventResult::Consumed(Some(Box::new(close_picker)));
             }
             ctrl!('s') => {
                 if let Some(option) = self.selection() {
                     (self.callback_fn)(cx, option, Action::HorizontalSplit);
                 }
-                return close_fn;
+                return EventResult::Consumed(Some(Box::new(close_picker)));
             }
             ctrl!('v') => {
                 if let Some(option) = self.selection() {
                     (self.callback_fn)(cx, option, Action::VerticalSplit);
                 }
-                return close_fn;
+                return EventResult::Consumed(Some(Box::new(close_picker)));
             }
             ctrl!('t') => {
                 self.toggle_preview();
