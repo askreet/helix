@@ -31,6 +31,7 @@ use helix_core::{
 use helix_view::{
     editor::Action,
     graphics::{CursorKind, Margin, Modifier, Rect},
+    quickfix,
     theme::Style,
     view::ViewPosition,
     Document, DocumentId, Editor,
@@ -365,17 +366,30 @@ impl<T: Item + Locate + 'static> Component for FilePicker<T> {
             Event::Key(ctrl!('q')) => {
                 ctx.editor.quickfix.reset();
 
-                for match_ in self.picker.matches {
-                    let match_item = self.picker.options[match_.index];
+                let options = &self.picker.options;
+                for match_ in &self.picker.matches {
+                    let match_item = &options[match_.index];
 
-                    match match_item.locate() {
-                        Some(file_location) => match file_location {
-                            (PathOrId::Id(_), None) => todo!(),
-                            (PathOrId::Id(_), Some(_)) => todo!(),
-                            (PathOrId::Path(_), None) => todo!(),
-                            (PathOrId::Path(_), Some(_)) => todo!(),
-                        },
-                        None => todo!(),
+                    if let Some((path_or_id, lines)) = match_item.locate(ctx.editor) {
+                        let path = match path_or_id {
+                            PathOrId::Id(doc_id) => ctx
+                                .editor
+                                .documents
+                                .get(&doc_id)
+                                .expect("doc_id is valid in editor")
+                                .path()
+                                .expect("doc to have path")
+                                .to_owned(),
+                            PathOrId::Path(path_buf) => path_buf,
+                        };
+
+                        ctx.editor.quickfix.add(quickfix::Entry {
+                            location: quickfix::Location {
+                                path,
+                                line: lines.unwrap_or((0, 0)).0,
+                            },
+                            text: "test".to_string(),
+                        });
                     }
                 }
                 return EventResult::Consumed(None);

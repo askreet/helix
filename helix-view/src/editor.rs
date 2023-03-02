@@ -5,7 +5,7 @@ use crate::{
     graphics::{CursorKind, Rect},
     info::Info,
     input::KeyEvent,
-    quickfix::quickfix,
+    quickfix,
     theme::{self, Theme},
     tree::{self, Tree},
     view::ViewPosition,

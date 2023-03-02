@@ -36,7 +36,7 @@ use helix_view::{
     info::Info,
     input::KeyEvent,
     keyboard::KeyCode,
-    tree,
+    quickfix, tree,
     view::View,
     Document, DocumentId, Editor, ViewId,
 };
@@ -457,6 +457,8 @@ impl MappableCommand {
         record_macro, "Record macro",
         replay_macro, "Replay macro",
         command_palette, "Open command palette",
+        goto_next_quickfix, "Goto next quickfix entry",
+        goto_prev_quickfix, "Goto previous quickfix entry",
     );
 }
 
@@ -2665,6 +2667,63 @@ pub fn command_palette(cx: &mut Context) {
             compositor.push(Box::new(overlayed(picker)));
         },
     ));
+}
+
+fn goto_next_quickfix(cx: &mut Context) {
+    let position = cx.editor.quickfix.next();
+
+    match position {
+        Some(pos) => {
+            goto_quickfix_location(cx.editor, pos.entry.location);
+
+            cx.editor
+                .set_status(format!("({}/{}) {}", pos.number, pos.total, pos.entry.text));
+        }
+        None => cx.editor.set_error("Quickfix list is empty!"),
+    }
+}
+
+fn goto_prev_quickfix(cx: &mut Context) {
+    let position = cx.editor.quickfix.prev();
+
+    match position {
+        Some(pos) => {
+            goto_quickfix_location(cx.editor, pos.entry.location);
+
+            cx.editor
+                .set_status(format!("({}/{}) {}", pos.number, pos.total, pos.entry.text));
+        }
+        None => cx.editor.set_error("Quickfix list is empty!"),
+    }
+}
+
+fn goto_quickfix_location(editor: &mut Editor, location: quickfix::Location) {
+    // TODO: Cribbed from global search callback, could be generalizable.
+    match editor.open(&location.path, Action::Replace) {
+        Ok(_) => {}
+        Err(e) => {
+            editor.set_error(format!(
+                "Failed to open file '{}': {}",
+                location.path.display(),
+                e
+            ));
+            return;
+        }
+    }
+
+    let (view, doc) = current!(editor);
+    let text = doc.text();
+    if location.line >= text.len_lines() {
+        editor.set_error(
+            "The line you jumped to does not exist anymore because the file has changed.",
+        );
+        return;
+    }
+    let start = text.line_to_char(location.line);
+    let end = text.line_to_char((location.line + 1).min(text.len_lines()));
+
+    doc.set_selection(view.id, Selection::single(start, end));
+    align_view(doc, view, Align::Center);
 }
 
 fn last_picker(cx: &mut Context) {

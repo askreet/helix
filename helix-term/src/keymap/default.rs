@@ -113,6 +113,7 @@ pub fn default() -> HashMap<Mode, Keymap> {
             "T" => goto_prev_test,
             "p" => goto_prev_paragraph,
             "space" => add_newline_above,
+            "q" => goto_prev_quickfix,
         },
         "]" => { "Right bracket"
             "d" => goto_next_diag,
@@ -126,6 +127,7 @@ pub fn default() -> HashMap<Mode, Keymap> {
             "T" => goto_next_test,
             "p" => goto_next_paragraph,
             "space" => add_newline_below,
+            "q" => goto_next_quickfix,
         },
 
         "/" => search,
